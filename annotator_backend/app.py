@@ -254,11 +254,11 @@ def filter_boxes_by_geometry(
     boxes: list[dict],
     reference_box: "BoundingBox",
     image_dims: tuple[int, int],
-    image_area_ratio: float = 0.18,
-    area_ratio_bounds: tuple[float, float] = (0.45, 1.6),
-    aspect_slack: float = 0.35,
-    dimension_slack: float = 0.55,
-    min_candidates: int = 3,
+    image_area_ratio: float = 0.25,  # Increased from 0.18 - allow larger boxes
+    area_ratio_bounds: tuple[float, float] = (0.3, 2.2),  # More lenient: 30-220% of reference
+    aspect_slack: float = 0.5,  # Increased from 0.35 - more aspect tolerance
+    dimension_slack: float = 0.7,  # Increased from 0.55 - more size tolerance
+    min_candidates: int = 2,  # Reduced from 3 - don't fallback too aggressively
     allow_fallback: bool = True,
 ) -> list[dict]:
     img_width, img_height = image_dims
@@ -310,9 +310,10 @@ def filter_boxes_by_geometry(
     primary = _filter(area_ratio_bounds, dimension_slack, aspect_slack)
 
     if allow_fallback and len(primary) < min_candidates:
-        relaxed_bounds = (max(0.2, area_ratio_bounds[0] * 0.6), area_ratio_bounds[1] * 1.8)
-        relaxed_slack = min(1.2, dimension_slack + 0.25)
-        relaxed_aspect = aspect_slack + 0.25
+        # Very lenient fallback - only filter obviously wrong sizes
+        relaxed_bounds = (0.15, 3.0)  # 15-300% of reference size
+        relaxed_slack = 1.0  # 100% tolerance on dimensions
+        relaxed_aspect = 0.8  # 80% aspect ratio tolerance
         fallback_results = _filter(relaxed_bounds, relaxed_slack, relaxed_aspect)
 
         if fallback_results:
@@ -427,11 +428,12 @@ class SaveAnnotationRequest(BaseModel):
 
 class VisualSimilarityRequest(BaseModel):
     image_path: str
-    crop_box: BoundingBox  # The box user drew
+    crop_box: BoundingBox  # The box user drew (label field contains AI description)
     similarity_threshold: float = 0.25  # DINO confidence threshold
     dino_threshold: float = 0.25  # DINO confidence threshold (explicit parameter)
     max_aspect_ratio: float = 3.0  # Legacy parameter (kept for backwards compatibility)
-    label_context: Optional[str] = None
+    label_context: Optional[str] = None  # Legacy - no longer used
+    output_label: Optional[str] = None  # Class name for labeling detected boxes
 
 @app.on_event("startup")
 async def startup_event():
@@ -533,6 +535,7 @@ async def get_annotations(image_name: str):
                     x_center = float(parts[1])
                     y_center = float(parts[2])
                     width = float(parts[3])
+                    
                     height = float(parts[4])
 
                     # Convert from YOLO format (normalized center) to absolute coordinates
@@ -704,7 +707,8 @@ async def predict_visual_similarity(request: VisualSimilarityRequest):
 
         image = Image.open(image_path).convert("RGB")
         crop_box = request.crop_box
-        context = (request.label_context or "").strip()
+        ai_description = crop_box.label  # Now contains AI description (e.g., "green bottle, red logo, lime")
+        output_label = request.output_label or crop_box.label  # Class name for dataset (e.g., "vim_bottle")
 
         # Extract reference crop from user's drawing
         reference_crop = image.crop((
@@ -718,25 +722,25 @@ async def predict_visual_similarity(request: VisualSimilarityRequest):
 
         print(f"\n{'='*60}")
         print(f"Visual Similarity Detection")
+        print(f"AI Description: '{ai_description}' | Output Label: '{output_label}'")
         print(f"Reference crop: {reference_crop.size}")
         print(f"DINO threshold: {request.dino_threshold}")
         print(f"{'='*60}")
 
-        # Step 1: Use DINO to detect all objects of this type
+        # Step 1: Use DINO to detect all objects using AI description
         raw_dino_boxes = detect_with_dino_only(
             image,
-            crop_box.label,
+            ai_description,  # Use AI description for detection
             confidence_threshold=request.dino_threshold,
             color_hints=color_hints,
-            user_context=context or None,
+            user_context=None,  # No longer using separate context
         )
 
         img_width, img_height = image.size
-        label_meta = parse_label_metadata(crop_box.label)
-        context_meta = parse_label_metadata(context) if context else {"packaging_hints": [], "brand_tokens": [], "color_hints": []}
+        label_meta = parse_label_metadata(ai_description)
 
-        combined_packaging_hints = merge_unique(label_meta["packaging_hints"], context_meta.get("packaging_hints", []))
-        combined_color_hints = merge_unique(color_hints, context_meta.get("color_hints", []))
+        combined_packaging_hints = label_meta["packaging_hints"]
+        combined_color_hints = merge_unique(color_hints, label_meta.get("color_hints", []))
 
         filtered_boxes = filter_boxes_by_geometry(
             raw_dino_boxes,
@@ -774,13 +778,13 @@ async def predict_visual_similarity(request: VisualSimilarityRequest):
         packaging_hint_line = "Expected packaging style: " + "; ".join(combined_packaging_hints) + "." if combined_packaging_hints else ""
         brand_hint = ", ".join(label_meta["brand_tokens"]) or label_meta["cleaned"]
         color_hint_line = "Expected colors: " + "/".join(combined_color_hints) + "." if combined_color_hints else ""
-        context_line = f"Annotator context: {context}." if context else ""
+        description_line = f"AI Description: {ai_description}." if ai_description else ""
 
         comparison_prompt = (
             "Compare these two product crops visually.\n\n"
             + (packaging_hint_line + "\n" if packaging_hint_line else "")
             + (color_hint_line + "\n" if color_hint_line else "")
-            + (context_line + "\n" if context_line else "")
+            + (description_line + "\n" if description_line else "")
             + f"Target brand/keyword cues: {brand_hint}.\n\n"
             + "For EACH image describe:\n"
             + "- Package type or container style (bottle, sachet, bar, box, pouch, tub, etc.)\n"
@@ -816,7 +820,7 @@ async def predict_visual_similarity(request: VisualSimilarityRequest):
                     color_gate -= 5.0
                 if color_hints:
                     color_gate -= 20.0
-                if context_meta.get("color_hints"):
+                if label_meta.get("color_hints"):
                     color_gate -= 5.0
 
                 if color_diff > color_gate:
@@ -867,7 +871,7 @@ async def predict_visual_similarity(request: VisualSimilarityRequest):
                             "y": box["y"],
                             "width": box["width"],
                             "height": box["height"],
-                            "label": crop_box.label,
+                            "label": output_label,  # Use output_label for class name
                             "confidence": box["confidence"],
                             "similarity": confidence
                         })

@@ -58,11 +58,20 @@ export default function ImageAnnotator({ imageName }: Props) {
   const [resizeHandle, setResizeHandle] = useState<string | null>(null);
   const [isEditMode, setIsEditMode] = useState(false);
   const [editingBox, setEditingBox] = useState<BoundingBox | null>(null);
-  const [dinoThreshold, setDinoThreshold] = useState(0.15); // DINO confidence threshold
+  const [dinoThreshold, setDinoThreshold] = useState(0.1); // Initial DINO threshold for fetching (5-50%)
+  const [filterThreshold, setFilterThreshold] = useState(0.1); // Real-time filter threshold
+  const [iouThreshold, setIouThreshold] = useState(0.4); // IoU threshold for deduplication
+  const [colorThreshold, setColorThreshold] = useState(110); // Color similarity threshold
   const [tool, setTool] = useState<'select' | 'hand'>('select');
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState<{ x: number; y: number } | null>(null);
   const [showClassLegend, setShowClassLegend] = useState(false);
+
+  // Real-time filtering state
+  const [allDetections, setAllDetections] = useState<BoundingBox[]>([]); // All detections from backend
+  const [filteredDetections, setFilteredDetections] = useState<BoundingBox[]>([]); // Filtered by sliders
+  const [showingPreviews, setShowingPreviews] = useState(false); // Whether we're showing preview boxes
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -92,11 +101,53 @@ export default function ImageAnnotator({ imageName }: Props) {
     }
   }, [boxes, classNames, scale, imageName]);
 
+  // Real-time filtering when sliders change
+  useEffect(() => {
+    if (allDetections.length === 0) {
+      setFilteredDetections([]);
+      return;
+    }
+
+    // Filter by confidence threshold (can only filter UP from initial threshold)
+    let filtered = allDetections.filter(box =>
+      (box.confidence || 0) >= filterThreshold
+    );
+
+    // Simple IoU-based deduplication
+    const deduplicated: BoundingBox[] = [];
+    filtered.forEach(box => {
+      const isDuplicate = deduplicated.some(existing => {
+        const iou = computeIoU(box, existing);
+        return iou > iouThreshold;
+      });
+      if (!isDuplicate) {
+        deduplicated.push(box);
+      }
+    });
+
+    setFilteredDetections(deduplicated);
+  }, [allDetections, filterThreshold, iouThreshold, colorThreshold]);
+
+  // Helper function to compute IoU
+  const computeIoU = (boxA: BoundingBox, boxB: BoundingBox): number => {
+    const x1 = Math.max(boxA.x, boxB.x);
+    const y1 = Math.max(boxA.y, boxB.y);
+    const x2 = Math.min(boxA.x + boxA.width, boxB.x + boxB.width);
+    const y2 = Math.min(boxA.y + boxA.height, boxB.y + boxB.height);
+
+    const intersection = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+    const areaA = boxA.width * boxA.height;
+    const areaB = boxB.width * boxB.height;
+    const union = areaA + areaB - intersection;
+
+    return union > 0 ? intersection / union : 0;
+  };
+
   useEffect(() => {
     if (imageData) {
       drawCanvas();
     }
-  }, [boxes, selectedBox, currentBox, imageData, scale, isEditMode, editingBox]);
+  }, [boxes, selectedBox, currentBox, imageData, scale, isEditMode, editingBox, filteredDetections, showingPreviews]);
 
   useEffect(() => {
     // Keyboard shortcuts
@@ -197,6 +248,26 @@ export default function ImageAnnotator({ imageName }: Props) {
         ctx.setLineDash([5, 5]);
         ctx.strokeRect(currentBox.x, currentBox.y, currentBox.width, currentBox.height);
         ctx.setLineDash([]);
+      }
+
+      // Draw preview boxes (filtered detections) - shown in cyan/blue
+      if (showingPreviews && filteredDetections.length > 0) {
+        filteredDetections.forEach((box, index) => {
+          ctx.strokeStyle = '#00d9ff';  // Cyan for preview
+          ctx.lineWidth = 2;
+          ctx.setLineDash([3, 3]);
+          ctx.strokeRect(box.x, box.y, box.width, box.height);
+          ctx.setLineDash([]);
+
+          // Draw confidence badge
+          ctx.fillStyle = 'rgba(0, 217, 255, 0.8)';
+          ctx.font = '12px Arial';
+          const confidenceText = `${(box.confidence! * 100).toFixed(0)}%`;
+          const textWidth = ctx.measureText(confidenceText).width;
+          ctx.fillRect(box.x, box.y - 18, textWidth + 6, 18);
+          ctx.fillStyle = 'white';
+          ctx.fillText(confidenceText, box.x + 3, box.y - 4);
+        });
       }
 
       // Draw editing box with resize handles (Photoshop style)
@@ -419,18 +490,25 @@ export default function ImageAnnotator({ imageName }: Props) {
   const commitEditingBox = async () => {
     if (!editingBox) return;
 
-    const label = labelInput.trim();
-    if (!label) {
-      alert('Please set a label in the toolbar before confirming the box.');
+    const className = labelInput.trim();
+    const description = labelContext.trim();
+
+    // Description is now required for AI detection
+    if (!description) {
+      alert('Please enter a Description (e.g., "green bottle, red logo, lime") to help the AI find similar objects.');
       return;
     }
 
-    const context = labelContext.trim();
+    // Class name is required for labeling
+    if (!className) {
+      alert('Please enter a Class Name (e.g., "vim_bottle") for the dataset label.');
+      return;
+    }
 
     // Add the manually drawn box first so the user always keeps their reference
-    const newBox = { ...editingBox, label };
+    const newBox = { ...editingBox, label: className };
     setBoxes((prev) => [...prev, newBox]);
-    setClassNames((prev) => (prev.includes(label) ? prev : [...prev, label]));
+    setClassNames((prev) => (prev.includes(className) ? prev : [...prev, className]));
 
     // Clear edit mode
     setIsEditMode(false);
@@ -441,6 +519,7 @@ export default function ImageAnnotator({ imageName }: Props) {
 
     try {
       // Use the visual similarity endpoint powered by Qwen3-VL
+      // Fetch detections at user's threshold, then filter in real-time
       const response = await fetch('http://localhost:8000/predict_visual_similarity', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -451,11 +530,12 @@ export default function ImageAnnotator({ imageName }: Props) {
             y: editingBox.y,
             width: editingBox.width,
             height: editingBox.height,
-            label: label
+            label: description  // Use description for AI detection
           },
-          similarity_threshold: dinoThreshold,
+          similarity_threshold: dinoThreshold,  // Use user's initial threshold
           dino_threshold: dinoThreshold,
-          label_context: context || null
+          label_context: null,
+          output_label: className
         })
       });
 
@@ -465,33 +545,16 @@ export default function ImageAnnotator({ imageName }: Props) {
       console.log('Number of boxes received:', data.boxes?.length || 0);
 
       if (data.boxes && data.boxes.length > 0) {
-        // Remove duplicates (boxes that are too close to each other)
-        const uniqueBoxes: BoundingBox[] = [];
-        data.boxes.forEach((box: BoundingBox & { similarity: number }) => {
-          console.log('Processing box:', box);
-          const isDuplicate = uniqueBoxes.some(existing =>
-            Math.abs(existing.x - box.x) < 30 && Math.abs(existing.y - box.y) < 30
-          );
-          if (!isDuplicate) {
-            uniqueBoxes.push({ ...box, label });
-          }
-        });
-
-        console.log('Unique boxes after filtering:', uniqueBoxes.length);
-
-        // Add all similar boxes with the user's label
-        if (uniqueBoxes.length > 0) {
-          setBoxes(prev => {
-            const newBoxes = [...prev, ...uniqueBoxes];
-            console.log('Total boxes after adding:', newBoxes.length);
-            return newBoxes;
-          });
-          console.log(`Auto-detected ${uniqueBoxes.length} visually similar objects for "${label}"`);
-        } else {
-          console.log('No similar objects found. Try lowering the similarity threshold.');
-        }
+        // Store ALL detections for real-time filtering
+        const allBoxes = data.boxes.map((box: any) => ({ ...box, label: className }));
+        setAllDetections(allBoxes);
+        setFilterThreshold(dinoThreshold); // Initialize filter at the fetch threshold
+        setShowingPreviews(true);
+        console.log(`Fetched ${allBoxes.length} detections. Use sliders to filter in real-time!`);
       } else {
         console.log('No boxes in response or empty array');
+        setAllDetections([]);
+        setShowingPreviews(false);
       }
     } catch (error) {
       console.error('Error auto-detecting:', error);
@@ -499,6 +562,25 @@ export default function ImageAnnotator({ imageName }: Props) {
     } finally {
       setLoading(false);
     }
+  };
+
+  const applyDetections = () => {
+    // Add filtered detections to the main boxes array
+    if (filteredDetections.length > 0) {
+      setBoxes(prev => [...prev, ...filteredDetections]);
+      console.log(`Applied ${filteredDetections.length} detections to annotations`);
+    }
+    // Clear preview state
+    setAllDetections([]);
+    setFilteredDetections([]);
+    setShowingPreviews(false);
+  };
+
+  const cancelPreview = () => {
+    // Cancel preview mode without applying
+    setAllDetections([]);
+    setFilteredDetections([]);
+    setShowingPreviews(false);
   };
 
   const handleCanvasMouseLeave = () => {
@@ -679,29 +761,88 @@ export default function ImageAnnotator({ imageName }: Props) {
 
           <div className="h-8 w-px bg-zinc-700" />
 
-          {/* DINO Threshold - Better contrast */}
-          <div className="flex items-center gap-2 bg-zinc-800/30 rounded-md px-3 py-1">
-            <span className="text-xs text-zinc-300 font-medium uppercase tracking-wide">DINO</span>
-            <Slider
-              value={[dinoThreshold]}
-              onValueChange={([v]) => setDinoThreshold(v)}
-              min={0.15}
-              max={0.40}
-              step={0.05}
-              className="w-28"
-            />
-            <Badge className="w-16 justify-center font-mono bg-zinc-800 text-zinc-100 border border-zinc-700 hover:bg-zinc-700">
-              {(dinoThreshold * 100).toFixed(0)}%
-            </Badge>
-          </div>
+          {/* Real-time Filters */}
+          {showingPreviews ? (
+            <>
+              {/* Filter Confidence - Real-time */}
+              <div className="flex items-center gap-2 bg-cyan-900/30 border border-cyan-700/30 rounded-md px-3 py-1">
+                <span className="text-xs text-cyan-300 font-medium uppercase tracking-wide">Min Confidence</span>
+                <Slider
+                  value={[filterThreshold]}
+                  onValueChange={([v]) => setFilterThreshold(v)}
+                  min={dinoThreshold}
+                  max={0.95}
+                  step={0.05}
+                  className="w-24"
+                />
+                <Badge className="w-12 justify-center font-mono bg-cyan-800 text-cyan-100 border border-cyan-700">
+                  {(filterThreshold * 100).toFixed(0)}%
+                </Badge>
+              </div>
 
-          <div className="h-8 w-px bg-zinc-700" />
+              {/* IoU Threshold - Real-time */}
+              <div className="flex items-center gap-2 bg-cyan-900/30 border border-cyan-700/30 rounded-md px-3 py-1">
+                <span className="text-xs text-cyan-300 font-medium uppercase tracking-wide">IoU</span>
+                <Slider
+                  value={[iouThreshold]}
+                  onValueChange={([v]) => setIouThreshold(v)}
+                  min={0.1}
+                  max={0.9}
+                  step={0.05}
+                  className="w-24"
+                />
+                <Badge className="w-12 justify-center font-mono bg-cyan-800 text-cyan-100 border border-cyan-700">
+                  {iouThreshold.toFixed(2)}
+                </Badge>
+              </div>
 
-          {/* AI Model Badge - More prominent */}
-          <Badge className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 gap-1.5 shadow-lg shadow-purple-900/50">
-            <Sparkles className="w-3.5 h-3.5" />
-            Qwen3-VL
-          </Badge>
+              {/* Preview count and actions */}
+              <div className="flex items-center gap-2">
+                <Badge variant="outline" className="bg-cyan-950 border-cyan-700 text-cyan-300">
+                  {filteredDetections.length} / {allDetections.length} detections
+                </Badge>
+                <Button
+                  onClick={applyDetections}
+                  size="sm"
+                  className="gap-1.5 bg-cyan-600 hover:bg-cyan-700 text-white"
+                >
+                  Apply ({filteredDetections.length})
+                </Button>
+                <Button
+                  onClick={cancelPreview}
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5 border-zinc-700 hover:bg-zinc-800"
+                >
+                  Cancel
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* DINO Threshold - Initial detection (before fetching) */}
+              <div className="flex items-center gap-2 bg-zinc-800/30 rounded-md px-3 py-1">
+                <span className="text-xs text-zinc-300 font-medium uppercase tracking-wide">Initial Threshold</span>
+                <Slider
+                  value={[dinoThreshold]}
+                  onValueChange={([v]) => setDinoThreshold(v)}
+                  min={0.05}
+                  max={0.5}
+                  step={0.05}
+                  className="w-28"
+                />
+                <Badge className="w-16 justify-center font-mono bg-zinc-800 text-zinc-100 border border-zinc-700 hover:bg-zinc-700">
+                  {(dinoThreshold * 100).toFixed(0)}%
+                </Badge>
+              </div>
+
+              {/* AI Model Badge - More prominent */}
+              <Badge className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 gap-1.5 shadow-lg shadow-purple-900/50">
+                <Sparkles className="w-3.5 h-3.5" />
+                Qwen3-VL
+              </Badge>
+            </>
+          )}
 
           <div className="flex-1" />
 
@@ -716,33 +857,37 @@ export default function ImageAnnotator({ imageName }: Props) {
           </Button>
         </div>
 
-        <div className="mt-3 grid gap-2 sm:grid-cols-[220px_minmax(0,1fr)]">
-          <div className="flex flex-col gap-1 bg-zinc-800/30 rounded-md px-3 py-2">
-            <label className="text-xs text-zinc-300 font-medium uppercase tracking-wide" htmlFor="label-input">
-              Label
-            </label>
-            <input
-              id="label-input"
-              type="text"
-              value={labelInput}
-              onChange={(e) => setLabelInput(e.target.value)}
-              placeholder="e.g. pepsodent_powder"
-              className="px-2 py-1.5 rounded bg-[#1a1a1a] border border-zinc-700 text-sm text-zinc-50 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-          </div>
-          <div className="flex flex-col gap-1 bg-zinc-800/30 rounded-md px-3 py-2">
+        <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_220px]">
+          <div className="flex flex-col gap-1 bg-purple-900/20 border border-purple-700/30 rounded-md px-3 py-2">
             <div className="flex items-center justify-between">
-              <label className="text-xs text-zinc-300 font-medium uppercase tracking-wide" htmlFor="context-input">
-                Context
+              <label className="text-xs text-purple-300 font-semibold uppercase tracking-wide flex items-center gap-1.5" htmlFor="context-input">
+                <Sparkles className="w-3.5 h-3.5" />
+                AI Description
               </label>
-              <span className="text-[10px] text-zinc-500 uppercase">Optional</span>
+              <span className="text-[10px] text-purple-400 uppercase font-semibold">Required - Used by DINO & Qwen</span>
             </div>
             <input
               id="context-input"
               type="text"
               value={labelContext}
               onChange={(e) => setLabelContext(e.target.value)}
-              placeholder="Describe packaging cues, variant, colors"
+              placeholder="green bottle, red logo, lime graphics"
+              className="px-2 py-1.5 rounded bg-[#1a1a1a] border border-purple-600/50 text-sm text-zinc-50 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
+            />
+          </div>
+          <div className="flex flex-col gap-1 bg-zinc-800/30 rounded-md px-3 py-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs text-zinc-300 font-medium uppercase tracking-wide" htmlFor="label-input">
+                Class Name
+              </label>
+              <span className="text-[10px] text-zinc-500 uppercase">Required - For dataset.yaml</span>
+            </div>
+            <input
+              id="label-input"
+              type="text"
+              value={labelInput}
+              onChange={(e) => setLabelInput(e.target.value)}
+              placeholder="e.g. vim_bottle"
               className="px-2 py-1.5 rounded bg-[#1a1a1a] border border-zinc-700 text-sm text-zinc-50 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
           </div>
