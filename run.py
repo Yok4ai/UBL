@@ -23,15 +23,6 @@ except ImportError:
     print("pip install ultralytics")
     sys.exit(1)
 
-try:
-    import wandb
-    from ultralytics.utils.callbacks.wb import callbacks as wb_callbacks
-    WANDB_AVAILABLE = True
-except ImportError:
-    WANDB_AVAILABLE = False
-    wb_callbacks = None
-    print("Warning: wandb not found. Install with: pip install wandb")
-
 
 def parse_args():
     """Parse command line arguments."""
@@ -171,7 +162,7 @@ def parse_args():
     parser.add_argument(
         '--seed',
         type=int,
-        default=0,
+        default=42,
         help='Random seed for reproducibility'
     )
 
@@ -304,42 +295,6 @@ def main():
     print("\nPreparing dataset configuration...")
     yaml_path, data_config = create_dataset_yaml(args.dataset)
 
-    # Initialize Weights & Biases with image logging
-    wandb_project = os.environ.get('WANDB_PROJECT', 'UBL-Annotation')
-    wandb_run = None
-    if WANDB_AVAILABLE and os.environ.get('WANDB_API_KEY'):
-        try:
-            wandb.login(key=os.environ.get('WANDB_API_KEY'))
-            wandb_run = wandb.init(
-                project=wandb_project,
-                name=args.name,
-                config={
-                    'model': args.model,
-                    'epochs': args.epochs,
-                    'batch_size': args.batch_size,
-                    'img_size': args.img_size,
-                    'optimizer': args.optimizer,
-                    'lr0': args.lr0,
-                    'classes': data_config['nc'],
-                    'dataset': args.dataset,
-                },
-                settings=wandb.Settings(
-                    # Log validation images every epoch
-                    _disable_stats=False,
-                    _disable_meta=False,
-                )
-            )
-            print(f"\n{'='*60}")
-            print(f"Weights & Biases initialized")
-            print(f"Project: {wandb_project}")
-            print(f"Run: {args.name}")
-            print(f"Dashboard: {wandb_run.url}")
-            print(f"Validation images will be logged every epoch")
-            print(f"{'='*60}\n")
-        except Exception as e:
-            print(f"Warning: Could not initialize wandb: {e}")
-            wandb_run = None
-
     # Print training info
     print_training_info(args, yaml_path, data_config)
 
@@ -396,10 +351,6 @@ def main():
             print("\nBest Metrics:")
             for key, value in metrics.items():
                 print(f"  {key}: {value}")
-
-        # Finish wandb run
-        if wandb_run is not None:
-            wandb.finish()
 
     except KeyboardInterrupt:
         print("\n\nTraining interrupted by user.")
