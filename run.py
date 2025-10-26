@@ -18,10 +18,18 @@ load_dotenv()
 
 try:
     from ultralytics import YOLO
+    from ultralytics import settings
 except ImportError:
     print("Error: ultralytics package not found. Please install it using:")
     print("pip install ultralytics")
     sys.exit(1)
+
+try:
+    import wandb
+    WANDB_AVAILABLE = True
+except ImportError:
+    WANDB_AVAILABLE = False
+    print("Warning: wandb not found. Install with: pip install -U wandb")
 
 
 def parse_args():
@@ -94,6 +102,13 @@ def parse_args():
         type=str,
         default='ubl_annotator',
         help='Experiment name'
+    )
+
+    parser.add_argument(
+        '--wandb-project',
+        type=str,
+        default='UBL-Annotation',
+        help='Weights & Biases project name (separate from local project directory)'
     )
 
     parser.add_argument(
@@ -294,6 +309,25 @@ def main():
     # Create dataset yaml with absolute paths
     print("\nPreparing dataset configuration...")
     yaml_path, data_config = create_dataset_yaml(args.dataset)
+
+    # Enable Weights & Biases if available
+    if WANDB_AVAILABLE:
+        try:
+            settings.update({'wandb': True})
+            # Set W&B project name via environment variable (Ultralytics reads this)
+            os.environ['WANDB_PROJECT'] = args.wandb_project
+            print(f"\n{'='*60}")
+            print(f"Weights & Biases enabled")
+            print(f"W&B Project: {args.wandb_project}")
+            print(f"W&B Run: {args.name}")
+            print(f"Local save directory: {args.project}/{args.name}")
+            print(f"W&B will automatically log metrics, images, and checkpoints")
+            print(f"{'='*60}\n")
+        except Exception as e:
+            print(f"Warning: Could not enable W&B: {e}")
+            settings.update({'wandb': False})
+    else:
+        settings.update({'wandb': False})
 
     # Print training info
     print_training_info(args, yaml_path, data_config)
