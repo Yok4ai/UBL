@@ -32,6 +32,42 @@ except ImportError:
     print("Warning: wandb not found. Install with: pip install -U wandb")
 
 
+def setup_wandb_auth():
+    """
+    Set up Weights & Biases authentication.
+    Uses Kaggle secrets if running in Kaggle, otherwise uses .env file.
+    """
+    if not WANDB_AVAILABLE:
+        return False
+
+    try:
+        # Check if running in Kaggle by trying to import kaggle_secrets
+        from kaggle_secrets import UserSecretsClient
+
+        # Running in Kaggle - use secrets
+        user_secrets = UserSecretsClient()
+        wandb_key = user_secrets.get_secret("wandb")
+        wandb.login(key=wandb_key)
+        print("Authenticated with Weights & Biases using Kaggle secrets")
+        return True
+
+    except ImportError:
+        # Not in Kaggle - use .env file
+        # wandb will automatically use WANDB_API_KEY from environment if set
+        wandb_key = os.getenv('WANDB_API_KEY')
+        if wandb_key:
+            wandb.login(key=wandb_key)
+            print("Authenticated with Weights & Biases using .env file")
+            return True
+        else:
+            print("Warning: WANDB_API_KEY not found in environment")
+            return False
+
+    except Exception as e:
+        print(f"Warning: Could not authenticate with W&B: {e}")
+        return False
+
+
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
@@ -313,16 +349,23 @@ def main():
     # Enable Weights & Biases if available
     if WANDB_AVAILABLE:
         try:
-            settings.update({'wandb': True})
-            # Set W&B project name via environment variable (Ultralytics reads this)
-            os.environ['WANDB_PROJECT'] = args.wandb_project
-            print(f"\n{'='*60}")
-            print(f"Weights & Biases enabled")
-            print(f"W&B Project: {args.wandb_project}")
-            print(f"W&B Run: {args.name}")
-            print(f"Local save directory: {args.project}/{args.name}")
-            print(f"W&B will automatically log metrics, images, and checkpoints")
-            print(f"{'='*60}\n")
+            # Authenticate with W&B (Kaggle secrets or .env)
+            auth_success = setup_wandb_auth()
+
+            if auth_success:
+                settings.update({'wandb': True})
+                # Set W&B project name via environment variable (Ultralytics reads this)
+                os.environ['WANDB_PROJECT'] = args.wandb_project
+                print(f"\n{'='*60}")
+                print(f"Weights & Biases enabled")
+                print(f"W&B Project: {args.wandb_project}")
+                print(f"W&B Run: {args.name}")
+                print(f"Local save directory: {args.project}/{args.name}")
+                print(f"W&B will automatically log metrics, images, and checkpoints")
+                print(f"{'='*60}\n")
+            else:
+                print("Warning: W&B authentication failed, disabling W&B integration")
+                settings.update({'wandb': False})
         except Exception as e:
             print(f"Warning: Could not enable W&B: {e}")
             settings.update({'wandb': False})
