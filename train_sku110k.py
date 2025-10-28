@@ -27,6 +27,8 @@ def parse_args():
                        help='Experiment name')
     parser.add_argument('--patience', type=int, default=20,
                        help='Early stopping patience')
+    parser.add_argument('--resume', action='store_true',
+                       help='Resume training from the last saved checkpoint')
     return parser.parse_args()
 
 
@@ -47,6 +49,7 @@ def main():
     print("SKU-110K Training Configuration")
     print("="*60)
     print(f"Model: {args.model}")
+    print(f"Resume: {args.resume}")
     print(f"Dataset YAML: {yaml_path}")
     print(f"Epochs: {args.epochs}")
     print(f"Batch size: {args.batch_size}")
@@ -68,7 +71,7 @@ def main():
 
     # Train model
     print("\nStarting training...")
-    results = model.train(
+    model.train(
         data=str(yaml_path),
         epochs=args.epochs,
         batch=args.batch_size,
@@ -77,6 +80,7 @@ def main():
         project='runs/train',
         name=args.name,
         patience=args.patience,
+        resume=args.resume,
         verbose=True,
         pretrained=True,
         val=True,
