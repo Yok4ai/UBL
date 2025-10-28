@@ -357,12 +357,14 @@ def main():
                 settings.update({'wandb': True})
                 # Set W&B project name via environment variable (Ultralytics reads this)
                 os.environ['WANDB_PROJECT'] = args.wandb_project
+                # Prevent WandB from uploading model checkpoints
+                os.environ['WANDB_LOG_MODEL'] = 'false'
                 print(f"\n{'='*60}")
                 print(f"Weights & Biases enabled")
                 print(f"W&B Project: {args.wandb_project}")
                 print(f"W&B Run: {args.name}")
                 print(f"Local save directory: {args.project}/{args.name}")
-                print(f"W&B will automatically log metrics, images, and checkpoints")
+                print(f"W&B will log metrics and images (model upload disabled)")
                 print(f"{'='*60}\n")
             else:
                 print("Warning: W&B authentication failed, disabling W&B integration")
