@@ -220,7 +220,8 @@ def parse_args():
     parser.add_argument(
         '--verbose',
         action='store_true',
-        help='Verbose output'
+        default=True,
+        help='Verbose output (shows per-class metrics)'
     )
 
     parser.add_argument(
@@ -401,6 +402,7 @@ def main():
         'verbose': args.verbose,
         'pretrained': args.pretrained,
         'resume': args.resume,
+        'val': True
     }
 
     # Add cache if specified
@@ -428,6 +430,32 @@ def main():
             print("\nBest Metrics:")
             for key, value in metrics.items():
                 print(f"  {key}: {value}")
+
+        # Load best model and run detailed validation with per-class metrics
+        best_model_path = Path(args.project) / args.name / 'weights' / 'best.pt'
+        if best_model_path.exists():
+            print("\n" + "="*60)
+            print("Running Detailed Validation with Per-Class Metrics")
+            print("="*60)
+            print(f"Loading best model: {best_model_path}\n")
+
+            best_model = YOLO(str(best_model_path))
+
+            # Run validation with verbose=True to show per-class metrics
+            val_metrics = best_model.val(
+                data=yaml_path,
+                split='val',
+                imgsz=args.img_size,
+                batch=args.batch_size,
+                device=args.device if args.device else None,
+                verbose=True  # This enables per-class output
+            )
+
+            print("\n" + "="*60)
+            print("Per-Class Validation Complete")
+            print("="*60 + "\n")
+        else:
+            print(f"\nWarning: Best model not found at {best_model_path}")
 
     except KeyboardInterrupt:
         print("\n\nTraining interrupted by user.")
