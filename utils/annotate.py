@@ -7,6 +7,7 @@ This script loads the trained model and generates annotations for new product im
 import argparse
 from pathlib import Path
 import sys
+import shutil
 
 try:
     from ultralytics import YOLO
@@ -90,7 +91,13 @@ def parse_args():
         '--save-img',
         action='store_true',
         default=True,
-        help='Save annotated images'
+        help='Save images'
+    )
+
+    parser.add_argument(
+        '--no-boxes',
+        action='store_true',
+        help='Save original images without bounding boxes (for dataset creation)'
     )
 
     parser.add_argument(
@@ -158,14 +165,18 @@ def main():
     print(f"Device: {args.device if args.device else 'auto'}")
     print(f"Save annotations: {args.save_txt}")
     print(f"Save images: {args.save_img}")
+    print(f"Save without boxes: {args.no_boxes}")
     print("="*60 + "\n")
 
     # Run inference
     print("Starting annotation...")
     try:
+        # If no-boxes is set, don't save images with boxes, we'll copy originals later
+        save_images = args.save_img and not args.no_boxes
+
         results = model.predict(
             source=str(source_path),
-            save=args.save_img,
+            save=save_images,
             save_txt=args.save_txt,
             save_conf=args.save_conf,
             conf=args.conf,
@@ -180,6 +191,19 @@ def main():
             verbose=args.verbose
         )
 
+        # If no-boxes is set, copy original images to output directory
+        if args.no_boxes and args.save_img:
+            print("\nCopying original images (without boxes)...")
+            images_output_dir = output_path / 'predictions'
+            images_output_dir.mkdir(parents=True, exist_ok=True)
+
+            for result in results:
+                original_path = Path(result.path)
+                dest_path = images_output_dir / original_path.name
+                shutil.copy2(original_path, dest_path)
+
+            print(f"Copied {len(results)} original images")
+
         print("\n" + "="*60)
         print("Annotation Complete!")
         print("="*60)
@@ -190,7 +214,10 @@ def main():
         print(f"Total detections: {total_detections}")
 
         if args.save_img:
-            print(f"Annotated images saved to: {output_path}/predictions/")
+            if args.no_boxes:
+                print(f"Original images (no boxes) saved to: {output_path}/predictions/")
+            else:
+                print(f"Annotated images saved to: {output_path}/predictions/")
         if args.save_txt:
             print(f"Annotation files saved to: {output_path}/predictions/labels/")
         print("="*60 + "\n")
