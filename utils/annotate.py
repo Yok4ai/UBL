@@ -103,15 +103,13 @@ def parse_args():
     parser.add_argument(
         '--show-labels',
         action='store_true',
-        default=True,
-        help='Show labels on annotated images'
+        help='Show labels on annotated images (default: False)'
     )
 
     parser.add_argument(
         '--show-conf',
         action='store_true',
-        default=True,
-        help='Show confidence scores on annotated images'
+        help='Show confidence scores on annotated images (default: False)'
     )
 
     parser.add_argument(
