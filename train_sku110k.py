@@ -13,7 +13,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Train YOLO on SKU-110K dataset')
     parser.add_argument('--data', type=str, default=None,
                        help='Path to dataset YAML file (default: SKU-110K.yaml in script directory)')
-    parser.add_argument('--model', type=str, default='yolo11n.pt',
+    parser.add_argument('--model', type=str, default='yolo11x.pt',
                        help='YOLO model to use (yolo11n.pt, yolo11s.pt, yolo11m.pt, etc.)')
     parser.add_argument('--epochs', type=int, default=50,
                        help='Number of epochs to train')
