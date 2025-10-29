@@ -207,28 +207,7 @@ def analyze_shelf_share(image_path, sku110k_model_path, ubl_model_path,
         'non_ubl_count': non_ubl_count,
         'share_of_shelf': share_of_shelf,
         'output_file': str(output_file),
-        'result_image': result_image  # Return image for notebook display
     }
-
-
-def analyze_and_display(image_path, sku110k_model_path='models/best_sku110k.pt',
-                       ubl_model_path='models/best_ubl_shelf.pt',
-                       confidence=0.25, iou_threshold=0.5, output_dir='results'):
-    """
-    Notebook-friendly function that runs analysis and returns the image for display.
-
-    Usage in Jupyter notebook:
-        from utils.shelf_analysis import analyze_and_display
-        from matplotlib import pyplot as plt
-
-        result = analyze_and_display('path/to/image.jpg')
-        plt.figure(figsize=(15, 10))
-        plt.imshow(cv2.cvtColor(result['result_image'], cv2.COLOR_BGR2RGB))
-        plt.axis('off')
-        plt.show()
-    """
-    return analyze_shelf_share(image_path, sku110k_model_path, ubl_model_path,
-                              confidence, iou_threshold, output_dir)
 
 
 def parse_args():
