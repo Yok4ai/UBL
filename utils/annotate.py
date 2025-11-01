@@ -83,7 +83,6 @@ def parse_args():
     parser.add_argument(
         '--save-conf',
         action='store_true',
-        default=True,
         help='Save confidence scores in annotations'
     )
 
