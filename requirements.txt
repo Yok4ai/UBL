@@ -1,6 +1,7 @@
 # YOLO11 Training Pipeline Requirements
 # Unilever Bangladesh Product Annotation Model
-
+wrapt
+python-dotenv
 # Core dependencies
 ultralytics
 torch
@@ -29,10 +30,10 @@ jupyter
 ipykernel
 
 # Optional: For better performance
-# albumentations
-# tensorboard
+albumentations
+tensorboard
 # clearml
-# wandb
+wandb
 
 # Kaggle specific (uncomment if running on Kaggle)
 # kaggle
