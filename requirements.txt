@@ -19,26 +19,26 @@ seaborn
 # Progress and logging
 tqdm
 
-# Qwen3-VL dependencies
-transformers
-accelerate
-bitsandbytes
-datasets
+# # Qwen3-VL dependencies
+# transformers
+# accelerate
+# bitsandbytes
+# datasets
 
-# Jupyter notebook support
-jupyter
-ipykernel
+# # Jupyter notebook support
+# jupyter
+# ipykernel
 
 # Optional: For better performance
 albumentations
 tensorboard
 # clearml
-wandb
+# wandb
 
 # Kaggle specific (uncomment if running on Kaggle)
 # kaggle
 
-# Grounding DINO Annotator Backend
-fastapi
-uvicorn
-python-multipart
+# # Grounding DINO Annotator Backend
+# fastapi
+# uvicorn
+# python-multipart
